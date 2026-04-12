@@ -8,3 +8,4 @@ pedalboard
 noisereduce
 pyloudnorm
 scipy
+ffmpeg-python
