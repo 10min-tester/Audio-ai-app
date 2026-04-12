@@ -3,8 +3,8 @@ FROM python:3.10-slim
 # Set the working directory in the container
 WORKDIR /app
 
-# Install system dependencies required for audio processing (libsndfile for soundfile)
-RUN apt-get update && apt-get install -y libsndfile1 && rm -rf /var/lib/apt/lists/*
+# Install system dependencies required for audio processing (libsndfile for soundfile, libatomic1 for pedalboard)
+RUN apt-get update && apt-get install -y libsndfile1 libatomic1 && rm -rf /var/lib/apt/lists/*
 
 # Copy backend requirements first to leverage Docker cache
 COPY backend/requirements.txt .
