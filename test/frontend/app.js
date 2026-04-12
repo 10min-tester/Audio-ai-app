@@ -17,7 +17,11 @@ const restoredPlayer = document.getElementById('restored-player');
 const downloadLink = document.getElementById('download-link');
 
 // UI Interactions
-dropZone.addEventListener('click', () => fileInput.click());
+// [수정] 드롭존 클릭 시 fileInput이 이미 활성화되어 있으면 중복 실행 방지
+dropZone.addEventListener('click', (e) => {
+    if (e.target === fileInput) return; // fileInput 자체 클릭은 무시
+    fileInput.click();
+});
 
 dropZone.addEventListener('dragover', (e) => {
     e.preventDefault();
@@ -60,14 +64,12 @@ function handleFileChange() {
 function updateWarnings() {
     const warningBox = document.getElementById('warning-box');
     
-    // Check toggle statuses
     const isSuperRes = document.getElementById('opt-super-res').checked;
     const isPunchy = document.getElementById('opt-punchy-bass').checked;
     const isBrilliance = document.getElementById('opt-brilliance').checked;
     const isLimiter = document.getElementById('opt-limiter').checked;
     const isStereo = document.getElementById('opt-stereo').checked;
 
-    // Get slider values
     const valSuperRes = parseInt(document.getElementById('val-super-res').value, 10);
     const valPunchy = parseInt(document.getElementById('val-punchy-bass').value, 10);
     const valBrilliance = parseInt(document.getElementById('val-brilliance').value, 10);
@@ -75,10 +77,10 @@ function updateWarnings() {
     const valStereo = parseInt(document.getElementById('val-stereo').value, 10);
 
     let load = 0;
-    if (isLimiter) load += valLimiter * 0.5; // Max 50
-    if (isBrilliance) load += valBrilliance * 0.25; // Max 25
-    if (isSuperRes) load += valSuperRes * 0.25; // Max 25
-    if (isPunchy) load += valPunchy * 0.2; // Max 20
+    if (isLimiter) load += valLimiter * 0.5;
+    if (isBrilliance) load += valBrilliance * 0.25;
+    if (isSuperRes) load += valSuperRes * 0.25;
+    if (isPunchy) load += valPunchy * 0.2;
 
     let warnings = [];
     warningBox.className = 'warning-box';
@@ -107,13 +109,11 @@ function updateWarnings() {
     }
 }
 
-// Add event listeners to all inputs to trigger warnings
 document.querySelectorAll('.options-grid input').forEach(input => {
     input.addEventListener('input', updateWarnings);
     input.addEventListener('change', updateWarnings);
 });
 
-// Run once on load
 updateWarnings();
 
 // Form Submission
@@ -141,22 +141,35 @@ form.addEventListener('submit', async (e) => {
     formData.append('val_limiter', document.getElementById('val-limiter').value);
 
     try {
-        // API URL (adjust for production)
         const response = await fetch('/api/restore', {
             method: 'POST',
             body: formData
         });
 
+        // [핵심 수정] 응답이 실패한 경우: blob()으로 읽어서 텍스트로 변환
+        // response.json()을 먼저 호출하면 스트림이 소진되어 blob()을 못 읽음
         if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || 'Restoration failed');
+            let errorMsg = 'Restoration failed';
+            try {
+                const errBlob = await response.blob();
+                const errText = await errBlob.text();
+                const errJson = JSON.parse(errText);
+                errorMsg = errJson.detail || errorMsg;
+            } catch (_) {
+                // JSON 파싱 실패해도 기본 메시지 사용
+            }
+            throw new Error(errorMsg);
         }
 
-        // Extract Audio Analysis from Headers
+        // [핵심 수정] 헤더는 스트림 소비 전에 읽기 (헤더는 언제든 읽을 수 있음)
         const lufs = parseFloat(response.headers.get("X-Analysis-LUFS") || "0");
         const crest = parseFloat(response.headers.get("X-Analysis-Crest") || "0");
         const phase = parseFloat(response.headers.get("X-Analysis-Phase") || "0");
-        
+
+        // [핵심 수정] blob()은 한 번만 호출 (스트림을 한 번만 소비)
+        const blob = await response.blob();
+        const outputUrl = URL.createObjectURL(blob);
+
         // Update Report UI
         const elLufs = document.getElementById("metric-lufs");
         const elCrest = document.getElementById("metric-crest");
@@ -165,7 +178,6 @@ form.addEventListener('submit', async (e) => {
         
         let feedbacks = [];
         
-        // 1. LUFS Logic
         elLufs.textContent = lufs + " LUFS";
         if (lufs > -8.0) {
             elLufs.className = "value danger";
@@ -177,7 +189,6 @@ form.addEventListener('submit', async (e) => {
             elLufs.className = "value good";
         }
 
-        // 2. Crest Factor Logic
         elCrest.textContent = crest + " dB";
         if (crest < 8.0) {
             elCrest.className = "value danger";
@@ -186,7 +197,6 @@ form.addEventListener('submit', async (e) => {
             elCrest.className = "value good";
         }
 
-        // 3. Phase Correlation Logic
         elPhase.textContent = phase;
         if (phase < 0.3) {
             elPhase.className = "value danger";
@@ -203,9 +213,6 @@ form.addEventListener('submit', async (e) => {
             elFeedback.style.color = "#15803d";
         }
 
-        const blob = await response.blob();
-        const outputUrl = URL.createObjectURL(blob);
-        
         // Update UI
         restoredPlayer.src = outputUrl;
         downloadLink.href = outputUrl;
