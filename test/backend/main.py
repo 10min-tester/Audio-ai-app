@@ -109,5 +109,7 @@ async def restore_audio(
         raise HTTPException(status_code=500, detail=str(e))
 
 # Serve the Frontend HTML/JS/CSS files at the root
-frontend_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend")
+# main.py는 backend/ 안에 있으므로 한 단계만 올라가면 test/ 루트
+frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend")
+frontend_dir = os.path.abspath(frontend_dir)
 app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")
