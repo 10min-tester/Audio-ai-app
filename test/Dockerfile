@@ -3,7 +3,8 @@ FROM python:3.10-slim
 # Set the working directory in the container
 WORKDIR /app
 
-# Install system dependencies required for audio processing (libsndfile for soundfile, libatomic1 for pedalboard)
+# Install system dependencies required for audio processing
+# [수정] ffmpeg 추가 - librosa가 mp3 등 압축 포맷 읽을 때 필수
 RUN apt-get update && apt-get install -y libsndfile1 libatomic1 ffmpeg && rm -rf /var/lib/apt/lists/*
 
 # Copy backend requirements first to leverage Docker cache
