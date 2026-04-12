@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Restoration AI</title>
+    <link rel="manifest" href="./manifest.json">
+    <link rel="stylesheet" href="index.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <h1>Audio Restoration AI</h1>
+        <p class="subtitle">Restore lost high frequencies from compressed audio using Deep Learning.</p>
+        
+        <form id="upload-form">
+            <div class="upload-area" id="drop-zone">
+                <div class="icon">🎧</div>
+                <div id="file-name-display">Drag & Drop or Click to Select File</div>
+                <input type="file" id="audio-file" accept="audio/*" required>
+            </div>
+            
+            <div class="options-grid">
+                <label class="toggle-container">
+                    <span>Super Resolution <small>(Restore Highs)</small></span>
+                    <div class="control-group">
+                        <label class="switch">
+                            <input type="checkbox" id="opt-super-res" checked>
+                            <span class="slider round"></span>
+                        </label>
+                        <input type="range" id="val-super-res" min="0" max="100" value="50" class="intensity-slider">
+                    </div>
+                </label>
+                <label class="toggle-container">
+                    <span>Noise Reduction <small>(Clean Background)</small></span>
+                    <div class="control-group">
+                        <label class="switch">
+                            <input type="checkbox" id="opt-noise-reduction" checked>
+                            <span class="slider round"></span>
+                        </label>
+                        <input type="range" id="val-noise-reduction" min="0" max="100" value="60" class="intensity-slider">
+                    </div>
+                </label>
+                <label class="toggle-container">
+                    <span>Punchy Bass <small>(Add Transient Energy)</small></span>
+                    <div class="control-group">
+                        <label class="switch">
+                            <input type="checkbox" id="opt-punchy-bass" checked>
+                            <span class="slider round"></span>
+                        </label>
+                        <input type="range" id="val-punchy-bass" min="0" max="100" value="50" class="intensity-slider">
+                    </div>
+                </label>
+                <label class="toggle-container">
+                    <span>Brilliance <small>(Harmonic Exciter)</small></span>
+                    <div class="control-group">
+                        <label class="switch">
+                            <input type="checkbox" id="opt-brilliance" checked>
+                            <span class="slider round"></span>
+                        </label>
+                        <input type="range" id="val-brilliance" min="0" max="100" value="40" class="intensity-slider">
+                    </div>
+                </label>
+                <label class="toggle-container">
+                    <span>Stereo Widener <small>(Spatial Expansion)</small></span>
+                    <div class="control-group">
+                        <label class="switch">
+                            <input type="checkbox" id="opt-stereo" checked>
+                            <span class="slider round"></span>
+                        </label>
+                        <input type="range" id="val-stereo" min="0" max="100" value="40" class="intensity-slider">
+                    </div>
+                </label>
+                <label class="toggle-container">
+                    <span>Loudness Maximizer <small>(Limiter)</small></span>
+                    <div class="control-group">
+                        <label class="switch">
+                            <input type="checkbox" id="opt-limiter" checked>
+                            <span class="slider round"></span>
+                        </label>
+                        <input type="range" id="val-limiter" min="0" max="100" value="80" class="intensity-slider">
+                    </div>
+                </label>
+            </div>
+            
+            <div id="warning-box" class="warning-box" style="display: none;"></div>
+
+            <button type="submit" id="submit-btn" class="primary-btn" disabled>Restore Quality</button>
+        </form>
+
+        <div class="loader-container" id="loader">
+            <div class="loader"></div>
+            <div class="status-text">Processing Audio with AI...</div>
+        </div>
+
+        <div class="result-area" id="result-area">
+            <h3>Restoration Complete!</h3>
+            
+            <div id="analysis-report" class="analysis-report">
+                <h4>📊 전문 마스터링 데이터 리포트</h4>
+                <div class="metric">
+                    <span class="label">체감 볼륨 (LUFS):</span>
+                    <span id="metric-lufs" class="value">--</span>
+                </div>
+                <div class="metric">
+                    <span class="label">다이내믹스 (Crest Factor):</span>
+                    <span id="metric-crest" class="value">--</span>
+                </div>
+                <div class="metric">
+                    <span class="label">위상 상관계수 (Phase Corr):</span>
+                    <span id="metric-phase" class="value">--</span>
+                </div>
+                <div id="analysis-feedback" class="feedback-box"></div>
+            </div>
+
+            <p style="color: #64748b; font-size: 0.9rem; margin-top: 24px; margin-bottom: 8px;">Original Audio:</p>
+            <audio id="original-player" class="audio-player" controls></audio>
+            
+            <p style="color: #64748b; font-size: 0.9rem; margin-top: 16px; margin-bottom: 8px;">Restored Audio:</p>
+            <audio id="restored-player" class="audio-player" controls></audio>
+            
+            <a href="#" id="download-link" class="download-btn" download>📥 Download High-Quality Audio (.wav)</a>
+        </div>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>

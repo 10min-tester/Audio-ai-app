@@ -1,0 +1,16 @@
+{
+  "name": "Audio Restorer AI",
+  "short_name": "Audio AI",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#10b981",
+  "description": "Professional Audio Restoration Tool powered by DSP and AI.",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/2824/2824647.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

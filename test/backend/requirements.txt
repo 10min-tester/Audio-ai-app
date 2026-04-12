@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+python-multipart
+librosa
+soundfile
+numpy
+pedalboard
+noisereduce
+pyloudnorm
+scipy
