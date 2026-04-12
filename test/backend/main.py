@@ -21,8 +21,8 @@ app.add_middleware(
 TEMP_DIR = "temp_audio"
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-@app.get("/")
-def read_root():
+@app.get("/api/health")
+async def health_check():
     return {"message": "Audio Restoration Backend Running"}
 
 @app.post("/api/restore")
