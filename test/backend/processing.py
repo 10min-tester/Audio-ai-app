@@ -22,9 +22,12 @@ def process_audio(input_path: str, output_path: str, options: dict):
         board = Pedalboard()
         
         # 2. Noise Reduction (Clean Background)
+        # [수정] noisereduce는 1D 배열만 지원 → 채널별로 분리해서 처리 후 합치기
         if options.get("noise_reduction"):
             val = float(options.get("val_noise_reduction", 60)) / 100.0  # 0.0 ~ 1.0
-            y = nr.reduce_noise(y=y, sr=sr, prop_decrease=val)
+            y_left  = nr.reduce_noise(y=y[0], sr=sr, prop_decrease=val)
+            y_right = nr.reduce_noise(y=y[1], sr=sr, prop_decrease=val)
+            y = np.array([y_left, y_right])
             
         # 3. Punchy Bass (Add Transient Energy)
         if options.get("punchy_bass"):
@@ -108,4 +111,4 @@ def process_audio(input_path: str, output_path: str, options: dict):
         return True, "Success", metrics
     except Exception as e:
         import traceback
-        return False, str(e) + "\\n" + traceback.format_exc(), {}
+        return False, str(e) + "\n" + traceback.format_exc(), {}
