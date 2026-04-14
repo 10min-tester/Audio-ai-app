@@ -263,6 +263,7 @@ form.addEventListener('submit', async (e) => {
         let done = false;
         let pollCount = 0;
         const maxPollCount = 180; // about 6 minutes
+        let lastProgress = 5;
 
         while (!done) {
             await new Promise(r => setTimeout(r, 2000));
@@ -273,6 +274,12 @@ form.addEventListener('submit', async (e) => {
 
             const statusRes = await fetch(`/api/status/${taskId}`);
             const statusData = await statusRes.json();
+            if (statusData.status === "processing") {
+                const p = Number(statusData.progress || lastProgress || 5);
+                lastProgress = Math.max(lastProgress, Math.min(99, p));
+                const stage = String(statusData.stage || "processing");
+                statusText.textContent = `Processing Audio with AI... ${lastProgress}% (${stage})`;
+            }
 
             if (statusData.status === "done") {
                 done = true;
@@ -295,7 +302,7 @@ form.addEventListener('submit', async (e) => {
                     elPhase.textContent = metrics.Phase_Corr;
                 }
 
-                statusText.textContent = 'Processing Audio with AI...';
+                statusText.textContent = 'Processing Audio with AI... 100% (done)';
                 loader.style.display = 'none';
                 resultArea.style.display = 'block';
             }
