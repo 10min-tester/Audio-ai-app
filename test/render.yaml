@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: audio-restoration-ai
+    runtime: docker
+    rootDir: test
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: GOOGLE_MODEL
+        value: gemini-1.5-flash
+      - key: GOOGLE_MODEL_FALLBACKS
+        value: gemini-2.0-flash,gemini-1.5-flash
+      - key: GOOGLE_PLAN_ENDPOINT
+        value: https://generativelanguage.googleapis.com/v1beta/models

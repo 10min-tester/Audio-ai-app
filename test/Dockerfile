@@ -21,5 +21,5 @@ EXPOSE 8000
 # Set the working directory to backend where main.py exists
 WORKDIR /app/backend
 
-# Start the application using Uvicorn
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Start the application using Uvicorn (Render/Fly style PORT env)
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]

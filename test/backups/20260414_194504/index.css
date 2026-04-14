@@ -84,30 +84,6 @@ p.subtitle {
   padding: 8px 10px;
 }
 
-.plan-source-badge {
-  margin-bottom: 16px;
-  padding: 8px 10px;
-  border: 1px solid var(--glass-border);
-  border-radius: 10px;
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: #475569;
-  background: rgba(255, 255, 255, 0.45);
-  text-align: left;
-}
-
-.plan-source-badge.external {
-  color: #065f46;
-  border-color: rgba(16, 185, 129, 0.35);
-  background: rgba(16, 185, 129, 0.12);
-}
-
-.plan-source-badge.fallback {
-  color: #92400e;
-  border-color: rgba(245, 158, 11, 0.35);
-  background: rgba(245, 158, 11, 0.12);
-}
-
 .upload-area {
   border: 2px dashed var(--glass-border);
   border-radius: 16px;
@@ -426,30 +402,4 @@ input:checked + .slider:before {
 
 .download-btn:hover {
   background: rgba(59, 130, 246, 0.2);
-}
-
-.feedback-actions {
-  margin-top: 12px;
-  display: flex;
-  gap: 8px;
-}
-
-.feedback-btn {
-  border: 1px solid var(--glass-border);
-  background: rgba(255, 255, 255, 0.6);
-  color: var(--text-primary);
-  padding: 8px 10px;
-  border-radius: 8px;
-  cursor: pointer;
-  font-size: 0.82rem;
-}
-
-.feedback-btn:hover {
-  background: rgba(59, 130, 246, 0.08);
-}
-
-.feedback-status {
-  margin-top: 8px;
-  font-size: 0.82rem;
-  color: #475569;
 }

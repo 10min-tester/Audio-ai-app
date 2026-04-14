@@ -11,16 +11,11 @@ const fileNameDisplay = document.getElementById('file-name-display');
 const submitBtn = document.getElementById('submit-btn');
 const form = document.getElementById('upload-form');
 const loader = document.getElementById('loader');
-const statusText = document.querySelector('.status-text');
 const resultArea = document.getElementById('result-area');
 const originalPlayer = document.getElementById('original-player');
 const restoredPlayer = document.getElementById('restored-player');
 const downloadLink = document.getElementById('download-link');
 const qualityPreset = document.getElementById('quality-preset');
-const planSourceBadge = document.getElementById('plan-source-badge');
-const feedbackStatus = document.getElementById('feedback-status');
-const feedbackButtons = document.querySelectorAll('.feedback-btn');
-let lastTaskId = null;
 
 const PRESET_VALUES = {
     music_balanced: {
@@ -107,8 +102,6 @@ function handleFileChange() {
         // Reset result area
         resultArea.style.display = 'none';
         restoredPlayer.src = '';
-        feedbackStatus.textContent = '';
-        lastTaskId = null;
     } else {
         fileNameDisplay.textContent = "Drag & Drop or Click to Select File";
         submitBtn.disabled = true;
@@ -179,15 +172,6 @@ updateWarnings();
 qualityPreset.addEventListener('change', () => applyPreset(qualityPreset.value));
 applyPreset(qualityPreset.value);
 
-async function postForm(url, formData) {
-    const res = await fetch(url, { method: 'POST', body: formData });
-    const data = await res.json();
-    if (!res.ok) {
-        throw new Error(data?.detail || `Request failed: ${url}`);
-    }
-    return data;
-}
-
 // Form Submission
 form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -197,69 +181,37 @@ form.addEventListener('submit', async (e) => {
     loader.style.display = 'block';
     resultArea.style.display = 'none';
 
+    const formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+    formData.append('preset', qualityPreset.value);
+    formData.append('super_res', document.getElementById('opt-super-res').checked);
+    formData.append('val_super_res', document.getElementById('val-super-res').value);
+    formData.append('noise_reduction', document.getElementById('opt-noise-reduction').checked);
+    formData.append('val_noise_reduction', document.getElementById('val-noise-reduction').value);
+    formData.append('punchy_bass', document.getElementById('opt-punchy-bass').checked);
+    formData.append('val_punchy_bass', document.getElementById('val-punchy-bass').value);
+    formData.append('brilliance', document.getElementById('opt-brilliance').checked);
+    formData.append('val_brilliance', document.getElementById('val-brilliance').value);
+    formData.append('stereo_widener', document.getElementById('opt-stereo').checked);
+    formData.append('val_stereo', document.getElementById('val-stereo').value);
+    formData.append('limiter', document.getElementById('opt-limiter').checked);
+    formData.append('val_limiter', document.getElementById('val-limiter').value);
+    formData.append('highpass', document.getElementById('opt-highpass').checked);
+    formData.append('val_highpass', document.getElementById('val-highpass').value);
+
     try {
-        const selectedFile = fileInput.files[0];
-        const preset = qualityPreset.value;
+        const res = await fetch('/api/restore', {
+            method: 'POST',
+            body: formData
+        });
 
-        statusText.textContent = 'Analyzing source audio...';
-        const analyzeForm = new FormData();
-        analyzeForm.append('file', selectedFile);
-        const analyzeData = await postForm('/api/analyze', analyzeForm);
-
-        statusText.textContent = 'Building AI processing plan...';
-        const planForm = new FormData();
-        planForm.append('analysis_json', JSON.stringify(analyzeData.analysis || {}));
-        planForm.append('preferred_preset', preset);
-        const planData = await postForm('/api/plan', planForm);
-        const planSource = String(planData.plan_source || "rule_based");
-        const planError = planData.plan_error ? String(planData.plan_error) : "";
-        planSourceBadge.classList.remove('external', 'fallback');
-        if (planSource === 'external_ai' || planSource === 'external_ai_openai' || planSource === 'external_ai_google') {
-            planSourceBadge.textContent = 'Plan: external AI';
-            planSourceBadge.classList.add('external');
-        } else if (planSource === 'rule_based_fallback') {
-            planSourceBadge.textContent = `Plan: fallback (rule-based)${planError ? ` - ${planError}` : ''}`;
-            planSourceBadge.classList.add('fallback');
-        } else {
-            planSourceBadge.textContent = 'Plan: local rule-based';
-        }
-
-        statusText.textContent = 'Applying restoration chain...';
-        const restoreForm = new FormData();
-        restoreForm.append('file', selectedFile);
-        restoreForm.append('preset', preset);
-        restoreForm.append('processing_plan_json', JSON.stringify(planData.processing_plan || {}));
-        restoreForm.append('plan_source', planSource);
-        restoreForm.append('plan_error', planError);
-        restoreForm.append('analysis_json', JSON.stringify(analyzeData.analysis || {}));
-        restoreForm.append('super_res', document.getElementById('opt-super-res').checked);
-        restoreForm.append('val_super_res', document.getElementById('val-super-res').value);
-        restoreForm.append('noise_reduction', document.getElementById('opt-noise-reduction').checked);
-        restoreForm.append('val_noise_reduction', document.getElementById('val-noise-reduction').value);
-        restoreForm.append('punchy_bass', document.getElementById('opt-punchy-bass').checked);
-        restoreForm.append('val_punchy_bass', document.getElementById('val-punchy-bass').value);
-        restoreForm.append('brilliance', document.getElementById('opt-brilliance').checked);
-        restoreForm.append('val_brilliance', document.getElementById('val-brilliance').value);
-        restoreForm.append('stereo_widener', document.getElementById('opt-stereo').checked);
-        restoreForm.append('val_stereo', document.getElementById('val-stereo').value);
-        restoreForm.append('limiter', document.getElementById('opt-limiter').checked);
-        restoreForm.append('val_limiter', document.getElementById('val-limiter').value);
-        restoreForm.append('highpass', document.getElementById('opt-highpass').checked);
-        restoreForm.append('val_highpass', document.getElementById('val-highpass').value);
-
-        const data = await postForm('/api/restore', restoreForm);
+        const data = await res.json();
         const taskId = data.task_id;
 
         let done = false;
-        let pollCount = 0;
-        const maxPollCount = 180; // about 6 minutes
 
         while (!done) {
             await new Promise(r => setTimeout(r, 2000));
-            pollCount += 1;
-            if (pollCount > maxPollCount) {
-                throw new Error("처리 시간이 너무 길어 타임아웃되었습니다. 파일 길이나 옵션을 줄여 다시 시도해 주세요.");
-            }
 
             const statusRes = await fetch(`/api/status/${taskId}`);
             const statusData = await statusRes.json();
@@ -269,9 +221,6 @@ form.addEventListener('submit', async (e) => {
 
                 const downloadUrl = `/api/download/${taskId}`;
                 restoredPlayer.src = downloadUrl;
-                downloadLink.href = downloadUrl;
-                lastTaskId = taskId;
-                feedbackStatus.textContent = '결과를 들어보고 피드백을 남겨주세요.';
 
                 const metrics = statusData.metrics;
 
@@ -285,44 +234,20 @@ form.addEventListener('submit', async (e) => {
                     elPhase.textContent = metrics.Phase_Corr;
                 }
 
-                statusText.textContent = 'Processing Audio with AI...';
                 loader.style.display = 'none';
                 resultArea.style.display = 'block';
             }
             if (statusData.status === "error") {
                 done = true;
                 alert("처리 실패: " + statusData.message);
-                statusText.textContent = 'Processing Audio with AI...';
                 loader.style.display = 'none';
             }
         }
 
     } catch (error) {
         alert("An error occurred during audio processing: " + error.message);
-        statusText.textContent = 'Processing Audio with AI...';
         loader.style.display = 'none';
     } finally {
         submitBtn.disabled = false;
     }
-});
-
-feedbackButtons.forEach((btn) => {
-    btn.addEventListener('click', async () => {
-        if (!lastTaskId) {
-            feedbackStatus.textContent = '먼저 처리 결과를 생성해 주세요.';
-            return;
-        }
-        const feedback = btn.getAttribute('data-feedback');
-        if (!feedback) return;
-
-        try {
-            const formData = new FormData();
-            formData.append('task_id', lastTaskId);
-            formData.append('feedback', feedback);
-            await postForm('/api/feedback', formData);
-            feedbackStatus.textContent = `피드백 저장됨: ${feedback}`;
-        } catch (error) {
-            feedbackStatus.textContent = `피드백 저장 실패: ${error.message}`;
-        }
-    });
 });

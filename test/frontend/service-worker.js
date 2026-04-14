@@ -1,4 +1,4 @@
-const CACHE_NAME = 'audio-ai-cache-v2';
+const CACHE_NAME = 'audio-ai-cache-v1';
 const urlsToCache = [
   './',
   './index.html',
