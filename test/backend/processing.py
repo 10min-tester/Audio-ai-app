@@ -196,7 +196,7 @@ def _safe_phase_widen_highband(y: np.ndarray, sr: int, width_strength: float) ->
     return np.array([out_l, out_r], dtype=np.float32)
 
 
-def _adaptive_noise_reduce(ch: np.ndarray, sr: int, intensity: float) -> np.ndarray:
+def _adaptive_noise_reduce(ch: np.ndarray, sr: int, intensity: float, fast_mode: bool = False) -> np.ndarray:
     # 무음/저레벨 구간을 노이즈 프로파일로 사용해 먹먹함을 줄임
     frame = 2048
     hop = 512
@@ -208,7 +208,8 @@ def _adaptive_noise_reduce(ch: np.ndarray, sr: int, intensity: float) -> np.ndar
     quiet_idx = np.where(rms <= q)[0]
 
     noise_segments = []
-    for idx in quiet_idx[:80]:
+    max_segments = 24 if fast_mode else 80
+    for idx in quiet_idx[:max_segments]:
         start = int(idx * hop)
         end = min(start + frame, ch.shape[0])
         if end - start > 256:
@@ -229,7 +230,7 @@ def _adaptive_noise_reduce(ch: np.ndarray, sr: int, intensity: float) -> np.ndar
                 sr=sr,
                 y_noise=y_noise,
                 prop_decrease=float(np.clip(intensity * 0.85, 0.12, 0.58)),
-                stationary=False
+                stationary=fast_mode
             )
         return nr.reduce_noise(
             y=ch,
@@ -258,13 +259,13 @@ def _classify_content(y: np.ndarray, sr: int) -> str:
     return "music"
 
 
-def _apply_deesser_channel(ch: np.ndarray, sr: int, strength: float) -> np.ndarray:
+def _apply_deesser_channel(ch: np.ndarray, sr: int, strength: float, fast_mode: bool = False) -> np.ndarray:
     strength = float(np.clip(strength, 0.0, 1.0))
     if strength <= 0.01:
         return ch
 
-    n_fft = 2048
-    hop = 512
+    n_fft = 1024 if fast_mode else 2048
+    hop = 256 if fast_mode else 512
     stft = librosa.stft(ch, n_fft=n_fft, hop_length=hop)
     mag = np.abs(stft)
     phase = np.angle(stft)
@@ -283,10 +284,10 @@ def _apply_deesser_channel(ch: np.ndarray, sr: int, strength: float) -> np.ndarr
     return out.astype(np.float32)
 
 
-def _apply_deesser(y: np.ndarray, sr: int, strength: float) -> np.ndarray:
+def _apply_deesser(y: np.ndarray, sr: int, strength: float, fast_mode: bool = False) -> np.ndarray:
     return np.array([
-        _apply_deesser_channel(y[0], sr, strength),
-        _apply_deesser_channel(y[1], sr, strength)
+        _apply_deesser_channel(y[0], sr, strength, fast_mode=fast_mode),
+        _apply_deesser_channel(y[1], sr, strength, fast_mode=fast_mode)
     ], dtype=np.float32)
 
 
@@ -514,6 +515,7 @@ def process_audio(input_path: str, output_path: str, options: dict):
         preset_name = str(options.get("preset", "music_balanced"))
         preset_profile = _get_preset_profile(preset_name)
         plan = options.get("processing_plan") or {}
+        mode = str(options.get("processing_mode", "auto")).lower()
         content_type = _classify_content(y, sr)
         output_profile = _get_output_profile(content_type=content_type, preset_name=preset_name)
 
@@ -526,7 +528,12 @@ def process_audio(input_path: str, output_path: str, options: dict):
         plan_highpass_offset = float(np.clip(plan.get("highpass_offset_hz", 0.0), -30.0, 40.0))
         plan_lufs_offset = float(np.clip(plan.get("target_lufs_offset", 0.0), -2.0, 2.0))
         analysis_hint = options.get("analysis_hint") or {}
+        duration_hint = float(analysis_hint.get("duration_sec", 0.0))
+        auto_fast = duration_hint >= 170.0
+        is_fast_mode = (mode == "fast_cloud") or (mode == "auto" and auto_fast)
         chain_scale = _chain_intensity_scale(analysis_hint=analysis_hint, content_type=content_type)
+        if is_fast_mode:
+            chain_scale *= 0.92
 
         board = Pedalboard()
 
@@ -535,8 +542,8 @@ def process_audio(input_path: str, output_path: str, options: dict):
             val = float(options.get("val_noise_reduction", 60)) / 100.0
             val = float(np.clip(val * preset_profile["nr_mul"] * plan_nr_mul, 0.0, 1.0))
             val = float(np.clip(val * (1.03 if chain_scale > 1.0 else 0.98), 0.0, 1.0))
-            y_left = _adaptive_noise_reduce(y[0], sr, val)
-            y_right = _adaptive_noise_reduce(y[1], sr, val)
+            y_left = _adaptive_noise_reduce(y[0], sr, val, fast_mode=is_fast_mode)
+            y_right = _adaptive_noise_reduce(y[1], sr, val, fast_mode=is_fast_mode)
             y = np.array([y_left, y_right])
 
         # High-pass filter
@@ -569,7 +576,8 @@ def process_audio(input_path: str, output_path: str, options: dict):
             base_mix = float(np.clip(val * deficit * 0.28 * preset_profile["sr_mix_mul"] * plan_sr_mul, 0.0, 0.3))
             mix_amt = _dynamic_super_res_mix(y, sr, base_mix=base_mix)
             mix_amt = float(np.clip(mix_amt * chain_scale, 0.0, 0.35))
-            sr_board = Pedalboard([HighpassFilter(cutoff_frequency_hz=6200), Distortion(drive_db=5.0)])
+            sr_drive = 4.0 if is_fast_mode else 5.0
+            sr_board = Pedalboard([HighpassFilter(cutoff_frequency_hz=6200), Distortion(drive_db=sr_drive)])
             y_highs = sr_board(y, sr)
             y = (y * (1.0 - mix_amt)) + (y_highs * mix_amt) + (y * 0.03 * deficit)
 
@@ -589,20 +597,21 @@ def process_audio(input_path: str, output_path: str, options: dict):
         deesser_strength = float(np.clip(deesser_strength * plan_deesser_mul, 0.0, 1.0))
         if chain_scale < 0.9:
             deesser_strength = float(np.clip(deesser_strength * 1.05, 0.0, 1.0))
-        y = _apply_deesser(y, sr, deesser_strength)
+        y = _apply_deesser(y, sr, deesser_strength, fast_mode=is_fast_mode)
 
         # 7. Multiband glue compression
         mb_intensity = 0.35 if content_type == "music" else 0.28
         if options.get("punchy_bass"):
             mb_intensity += (float(options.get("val_punchy_bass", 50)) / 100.0) * 0.15
         mb_intensity *= chain_scale
-        y = _multiband_glue(
-            y,
-            sr,
-            intensity=float(np.clip(mb_intensity, 0.15, 0.65)),
-            content_type=content_type,
-            analysis_hint=analysis_hint
-        )
+        if not is_fast_mode:
+            y = _multiband_glue(
+                y,
+                sr,
+                intensity=float(np.clip(mb_intensity, 0.15, 0.65)),
+                content_type=content_type,
+                analysis_hint=analysis_hint
+            )
 
         # 8.5 Transient preserve
         transient_amount = 0.26 if content_type == "music" else 0.2
@@ -659,7 +668,8 @@ def process_audio(input_path: str, output_path: str, options: dict):
             wet = 0.94
         y = _safe_wet_mix(y, y_reference=y_reference, wet=wet)
 
-        y = _overprocessing_guard(y, y_reference=y_reference, sr=sr)
+        if not is_fast_mode:
+            y = _overprocessing_guard(y, y_reference=y_reference, sr=sr)
         y = _apply_true_peak_guard(y, target_dbtp=float(output_profile["true_peak_dbtp"]))
         y = _normalize_headroom(y, headroom_db=1.0)
 
@@ -688,12 +698,14 @@ def process_audio(input_path: str, output_path: str, options: dict):
                 metrics["Phase_Corr"] = 1.0 # Mono
             metrics["TruePeak_dBTP"] = round(_true_peak_db(y, upsample=4), 2)
             metrics["Content"] = content_type
+            metrics["Mode"] = "fast_cloud" if is_fast_mode else "full"
         except Exception as e:
             metrics["LUFS"] = 0
             metrics["Crest_dB"] = 0
             metrics["Phase_Corr"] = 0
             metrics["TruePeak_dBTP"] = 0
             metrics["Content"] = content_type
+            metrics["Mode"] = "fast_cloud" if is_fast_mode else "full"
             print("Analysis Error:", e)
 
         # 8. Save Audio Output

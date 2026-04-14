@@ -476,6 +476,7 @@ async def restore_audio(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     preset: str = Form("music_balanced"),
+    processing_mode: str = Form("auto"),
     processing_plan_json: str = Form(""),
     plan_source: str = Form("unknown"),
     plan_error: str = Form(""),
@@ -524,6 +525,7 @@ async def restore_audio(
 
     options = {
         "preset": preset,
+        "processing_mode": processing_mode,
         "processing_plan": parsed_plan,
         "analysis_hint": parsed_analysis,
         "super_res": super_res,
@@ -552,6 +554,7 @@ async def restore_audio(
         options,
         {
             "preset": preset,
+            "processing_mode": processing_mode,
             "plan_source": plan_source,
             "plan_error": plan_error,
             "analysis": parsed_analysis,
@@ -587,6 +590,7 @@ def run_processing(task_id, input_path, output_path, options, trace_meta=None):
             "status": "done",
             "filename": trace_meta.get("filename", ""),
             "preset": trace_meta.get("preset", ""),
+            "processing_mode": trace_meta.get("processing_mode", ""),
             "plan_source": trace_meta.get("plan_source", ""),
             "plan_error": trace_meta.get("plan_error", ""),
             "analysis": trace_meta.get("analysis", {}),
@@ -604,6 +608,7 @@ def run_processing(task_id, input_path, output_path, options, trace_meta=None):
             "status": "error",
             "filename": trace_meta.get("filename", ""),
             "preset": trace_meta.get("preset", ""),
+            "processing_mode": trace_meta.get("processing_mode", ""),
             "plan_source": trace_meta.get("plan_source", ""),
             "plan_error": trace_meta.get("plan_error", ""),
             "analysis": trace_meta.get("analysis", {}),

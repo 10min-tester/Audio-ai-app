@@ -108,6 +108,12 @@ p.subtitle {
   background: rgba(245, 158, 11, 0.12);
 }
 
+.plan-source-badge.mode-fast {
+  color: #1d4ed8;
+  border-color: rgba(59, 130, 246, 0.35);
+  background: rgba(59, 130, 246, 0.1);
+}
+
 .upload-area {
   border: 2px dashed var(--glass-border);
   border-radius: 16px;

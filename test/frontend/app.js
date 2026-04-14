@@ -18,6 +18,7 @@ const restoredPlayer = document.getElementById('restored-player');
 const downloadLink = document.getElementById('download-link');
 const qualityPreset = document.getElementById('quality-preset');
 const planSourceBadge = document.getElementById('plan-source-badge');
+const processingModeBadge = document.getElementById('processing-mode-badge');
 const feedbackStatus = document.getElementById('feedback-status');
 const feedbackButtons = document.querySelectorAll('.feedback-btn');
 let lastTaskId = null;
@@ -225,9 +226,18 @@ form.addEventListener('submit', async (e) => {
         }
 
         statusText.textContent = 'Applying restoration chain...';
+        const durationSec = Number((analyzeData.analysis || {}).duration_sec || 0);
+        const estimatedLong = durationSec >= 170 || selectedFile.size >= (20 * 1024 * 1024);
+        const processingMode = estimatedLong ? 'fast_cloud' : 'full';
+        processingModeBadge.classList.remove('mode-fast');
+        processingModeBadge.textContent = `Mode: ${processingMode}`;
+        if (processingMode === 'fast_cloud') {
+            processingModeBadge.classList.add('mode-fast');
+        }
         const restoreForm = new FormData();
         restoreForm.append('file', selectedFile);
         restoreForm.append('preset', preset);
+        restoreForm.append('processing_mode', processingMode);
         restoreForm.append('processing_plan_json', JSON.stringify(planData.processing_plan || {}));
         restoreForm.append('plan_source', planSource);
         restoreForm.append('plan_error', planError);
