@@ -544,7 +544,7 @@ async def restore_audio(
         "val_highpass": val_highpass
     }
 
-    tasks_status[file_id] = {"status": "processing"}
+    tasks_status[file_id] = {"status": "processing", "progress": 5, "stage": "queued"}
 
     background_tasks.add_task(
         run_processing,
@@ -575,12 +575,18 @@ app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")
 def run_processing(task_id, input_path, output_path, options, trace_meta=None):
     from processing import process_audio
 
+    tasks_status[task_id] = {"status": "processing", "progress": 15, "stage": "preparing"}
+    tasks_status[task_id] = {"status": "processing", "progress": 75, "stage": "processing"}
     success, msg, metrics = process_audio(input_path, output_path, options)
+    if success:
+        tasks_status[task_id] = {"status": "processing", "progress": 95, "stage": "finalizing"}
     trace_meta = trace_meta or {}
 
     if success:
         tasks_status[task_id] = {
             "status": "done",
+            "progress": 100,
+            "stage": "done",
             "output": output_path,
             "metrics": metrics
         }
@@ -600,6 +606,8 @@ def run_processing(task_id, input_path, output_path, options, trace_meta=None):
     else:
         tasks_status[task_id] = {
             "status": "error",
+            "progress": 100,
+            "stage": "error",
             "message": msg
         }
         _append_process_log({
