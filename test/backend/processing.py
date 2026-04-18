@@ -9,9 +9,9 @@ from pedalboard import Pedalboard, Compressor, Distortion, HighpassFilter, Limit
 from scipy.signal import butter, sosfiltfilt, resample_poly
 import noisereduce as nr
 
-# --- 상기 설정: Render 512MB RAM 환경 최적화 ---
-_CHUNK_SEC = 10          # 10초 단위 분할 (RAM 점유 최소화)
-_LONG_AUDIO_SEC = 15     # 15초 이상이면 즉시 분할 처리
+# --- Render Free Tier (512MB RAM) 최적화 설정 ---
+_CHUNK_SEC = 10          
+_LONG_AUDIO_SEC = 15     
 
 def _ensure_stereo(y: np.ndarray) -> np.ndarray:
     if y.ndim == 1:
@@ -26,7 +26,9 @@ def _normalize_headroom(y: np.ndarray, headroom_db: float = 3.0) -> np.ndarray:
     return y * (target_peak / peak)
 
 def _high_band_deficit_ratio(y: np.ndarray, sr: int, split_hz: float = 6000.0) -> float:
-    stft = np.abs(librosa.stft(librosa.to_mono(y), n_fft=2048, hop_length=512))
+    # 메모리 절약을 위해 mono로 변환 후 분석
+    y_mono = librosa.to_mono(y)
+    stft = np.abs(librosa.stft(y_mono, n_fft=2048, hop_length=512))
     freqs = librosa.fft_frequencies(sr=sr, n_fft=2048)
     low_mask = (freqs >= 150.0) & (freqs < split_hz)
     high_mask = freqs >= split_hz
@@ -34,60 +36,58 @@ def _high_band_deficit_ratio(y: np.ndarray, sr: int, split_hz: float = 6000.0) -
     high_energy = float(np.mean(stft[high_mask])) + 1e-9
     return float(np.clip((0.22 - (high_energy / low_energy)) / 0.22, 0.0, 1.0))
 
-def _adaptive_noise_reduce(ch: np.ndarray, sr: int, intensity: float, fast_mode: bool = False) -> np.ndarray:
-    frame, hop = 2048, 512
-    rms = librosa.feature.rms(y=ch, frame_length=frame, hop_length=hop)[0]
-    if rms.size == 0: return ch
-    q = np.percentile(rms, 20)
-    quiet_idx = np.where(rms <= q)[0]
-    noise_segments = [ch[int(idx*hop):min(int(idx*hop)+frame, ch.shape[0])] for idx in quiet_idx[:40]]
-    
-    if noise_segments:
-        y_noise = np.concatenate(noise_segments)
-        return nr.reduce_noise(y=ch, sr=sr, y_noise=y_noise, prop_decrease=float(np.clip(intensity, 0.15, 0.72)), stationary=True)
-    return nr.reduce_noise(y=ch, sr=sr, prop_decrease=0.3, stationary=True)
-
 def _classify_content(y: np.ndarray, sr: int) -> str:
     y_mono = librosa.to_mono(y)
     centroid = float(np.mean(librosa.feature.spectral_centroid(y=y_mono, sr=sr)))
     zcr = float(np.mean(librosa.feature.zero_crossing_rate(y_mono)))
     return "voice" if centroid > 2100.0 and zcr > 0.075 else "music"
 
-def _apply_deesser(y: np.ndarray, sr: int, strength: float, fast_mode: bool = False) -> np.ndarray:
+# --- main.py에서 호출하는 필수 함수 1: analyze_audio ---
+def analyze_audio(input_path: str) -> dict:
+    y, sr = librosa.load(input_path, sr=None, mono=False)
+    y = _ensure_stereo(y)
+    y_mono = librosa.to_mono(y)
+    
+    duration = float(y.shape[1] / sr)
+    peak = float(np.max(np.abs(y_mono)))
+    
+    # 512MB 환경을 위해 분석 후 즉시 메모리 해제 시도
+    high_deficit = _high_band_deficit_ratio(y, sr)
+    content = _classify_content(y, sr)
+    
+    res = {
+        "duration_sec": round(duration, 2),
+        "peak_db": round(float(20 * np.log10(peak + 1e-10)), 2),
+        "high_band_loss": round(high_deficit * 100, 1),
+        "content_type": content
+    }
+    del y, y_mono; gc.collect()
+    return res
+
+# --- main.py에서 호출하는 필수 함수 2: build_processing_plan ---
+def build_processing_plan(analysis: dict) -> dict:
+    # 분석 결과에 따라 자동으로 옵션 제안
+    plan = {
+        "noise_reduction": True if analysis["content_type"] == "voice" else False,
+        "super_res": True if analysis["high_band_loss"] > 30 else False,
+        "highpass": True,
+        "limiter": True
+    }
+    return plan
+
+def _adaptive_noise_reduce(ch: np.ndarray, sr: int, intensity: float) -> np.ndarray:
+    return nr.reduce_noise(y=ch, sr=sr, prop_decrease=float(np.clip(intensity, 0.1, 0.8)), stationary=True)
+
+def _apply_deesser(y: np.ndarray, sr: int, strength: float) -> np.ndarray:
     def _deess_ch(ch):
-        n_fft, hop = (1024, 256) if fast_mode else (2048, 512)
-        stft = librosa.stft(ch, n_fft=n_fft, hop_length=hop)
+        stft = librosa.stft(ch, n_fft=2048, hop_length=512)
         mag, phase = np.abs(stft), np.angle(stft)
-        freqs = librosa.fft_frequencies(sr=sr, n_fft=n_fft)
+        freqs = librosa.fft_frequencies(sr=sr, n_fft=2048)
         s_band = (freqs >= 4500.0) & (freqs <= 9800.0)
         if not np.any(s_band): return ch
-        s_energy = np.mean(mag[s_band, :], axis=0)
-        thr = np.percentile(s_energy, 78)
-        atten = 1.0 - (np.maximum((s_energy - thr) / (thr + 1e-9), 0.0) * (0.35 * strength))
-        mag[s_band, :] *= atten[np.newaxis, :]
-        return librosa.istft(mag * np.exp(1j * phase), hop_length=hop, length=ch.shape[0])
+        mag[s_band, :] *= 0.8 # 단순화된 감쇄
+        return librosa.istft(mag * np.exp(1j * phase), hop_length=512, length=ch.shape[0])
     return np.array([_deess_ch(y[0]), _deess_ch(y[1])], dtype=np.float32)
-
-def _split_bands(ch: np.ndarray, sr: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    low_sos = butter(4, 180.0, btype="low", fs=sr, output="sos")
-    high_sos = butter(4, 3500.0, btype="high", fs=sr, output="sos")
-    low, high = sosfiltfilt(low_sos, ch), sosfiltfilt(high_sos, ch)
-    return low.astype(np.float32), (ch - low - high).astype(np.float32), high.astype(np.float32)
-
-def _multiband_glue(y: np.ndarray, sr: int, intensity: float, content_type: str) -> np.ndarray:
-    if intensity <= 0.01: return y
-    out = []
-    for ch in y:
-        l, m, h = _split_bands(ch, sr)
-        l_c = Pedalboard([Compressor(threshold_db=-22.0, ratio=2.0, attack_ms=25, release_ms=180)])(l, sr)
-        m_c = Pedalboard([Compressor(threshold_db=-20.0, ratio=2.2, attack_ms=12, release_ms=120)])(m, sr)
-        h_c = Pedalboard([Compressor(threshold_db=-24.0, ratio=1.8, attack_ms=5, release_ms=80)])(h, sr)
-        out.append((l_c + m_c + h_c).astype(np.float32))
-    return np.array(out, dtype=np.float32)
-
-def _true_peak_db(y: np.ndarray) -> float:
-    peaks = [np.max(np.abs(resample_poly(ch, 4, 1))) for ch in y]
-    return float(20.0 * np.log10(max(peaks) + 1e-12))
 
 def _find_split_point(y_mono: np.ndarray, sr: int, target_sample: int) -> int:
     search = int(3.0 * sr)
@@ -107,6 +107,7 @@ def _split_audio_at_silence(y: np.ndarray, sr: int) -> list:
         pos = split
     return chunks
 
+# --- main.py에서 호출하는 필수 함수 3: process_audio ---
 def process_audio(input_path: str, output_path: str, options: dict):
     try:
         y_full, sr = librosa.load(input_path, sr=None, mono=False)
@@ -122,19 +123,17 @@ def process_audio(input_path: str, output_path: str, options: dict):
                 with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as t_in, \
                      tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as t_out:
                     sf.write(t_in.name, chunk.T, sr, subtype="PCM_16")
-                    success, _, _ = _process_audio_core(t_in.name, t_out.name, options)
-                    if success:
-                        res, _ = librosa.load(t_out.name, sr=sr, mono=False)
-                        processed_chunks.append(_ensure_stereo(res))
-                    else:
-                        processed_chunks.append(chunk)
-                for p in [t_in.name, t_out.name]:
-                    if os.path.exists(p): os.remove(p)
+                    _process_audio_core(t_in.name, t_out.name, options)
+                    res, _ = librosa.load(t_out.name, sr=sr, mono=False)
+                    processed_chunks.append(_ensure_stereo(res))
+                
+                if os.path.exists(t_in.name): os.remove(t_in.name)
+                if os.path.exists(t_out.name): os.remove(t_out.name)
                 del chunk; gc.collect()
 
             y_out = np.concatenate(processed_chunks, axis=1)
             sf.write(output_path, y_out.T, sr, subtype="PCM_16")
-            return True, "Success (10s Chunked)", {"Mode": "Chunked"}
+            return True, "Success (10s Chunked)", {}
 
         return _process_audio_core(input_path, output_path, options)
     except Exception as e:
@@ -144,37 +143,22 @@ def _process_audio_core(input_path: str, output_path: str, options: dict):
     try:
         y, sr = librosa.load(input_path, sr=None, mono=False)
         y = _normalize_headroom(_ensure_stereo(y), 3.0)
-        y_ref = y.copy()
-        content = _classify_content(y, sr)
         
-        # 1. Noise Reduction
         if options.get("noise_reduction"):
-            val = float(options.get("val_noise_reduction", 60)) / 100.0
-            y = np.array([_adaptive_noise_reduce(y[0], sr, val), _adaptive_noise_reduce(y[1], sr, val)])
+            y = np.array([_adaptive_noise_reduce(y[0], sr, 0.5), _adaptive_noise_reduce(y[1], sr, 0.5)])
 
-        # 2. Highpass
         if options.get("highpass"):
-            y = Pedalboard([HighpassFilter(cutoff_frequency_hz=float(options.get("val_highpass", 80)))])(y, sr)
+            y = Pedalboard([HighpassFilter(cutoff_frequency_hz=80.0)])(y, sr)
 
-        # 3. Super Res (Highs Restore)
         if options.get("super_res"):
-            val = float(options.get("val_super_res", 50)) / 100.0
-            mix = val * _high_band_deficit_ratio(y, sr) * 0.25
-            y_h = Pedalboard([HighpassFilter(6200), Distortion(5.0)])(y, sr)
-            y = (y * (1.0 - mix)) + (y_h * mix)
+            y_h = Pedalboard([HighpassFilter(6000), Distortion(drive_db=10)])(y, sr)
+            y = (y * 0.8) + (y_h * 0.2)
 
-        # 4. De-esser & Multiband
-        y = _apply_deesser(y, sr, 0.5, fast_mode=True)
-        y = _multiband_glue(y, sr, 0.3, content)
-
-        # 5. Gain & Limiter
-        target_lufs = -16.0 if content == "voice" else -14.0
-        # (Loudness 정규화 로직 생략/간소화 - RAM 절약)
         if options.get("limiter"):
-            y = Pedalboard([Gain(2.0), Limiter(threshold_db=-1.0)])(y, sr)
+            y = Pedalboard([Gain(gain_db=2.0), Limiter(threshold_db=-1.0)])(y, sr)
 
         sf.write(output_path, y.T, sr, subtype="PCM_16")
-        del y, y_ref; gc.collect()
+        del y; gc.collect()
         return True, "Success", {}
     except Exception as e:
         return False, str(e), {}
