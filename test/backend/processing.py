@@ -501,13 +501,126 @@ def _safe_wet_mix(y_processed: np.ndarray, y_reference: np.ndarray, wet: float) 
         return y_processed
     return (y_processed * wet + y_reference * (1.0 - wet)).astype(np.float32)
 
+# 청크 분할 처리 관련 상수
+_CHUNK_SEC = 30          # 기본 청크 길이 (초)
+_LONG_AUDIO_SEC = 60     # 이 길이 이상이면 분할 처리
+
+
+def _find_split_point(y_mono: np.ndarray, sr: int, target_sample: int, search_sec: float = 3.0) -> int:
+    """target_sample 근처에서 가장 에너지가 낮은 지점을 찾아 반환."""
+    search_samples = int(search_sec * sr)
+    start = max(0, target_sample - search_samples)
+    end = min(len(y_mono), target_sample + search_samples)
+    segment = y_mono[start:end]
+    frame = 1024
+    hop = 256
+    rms_frames = librosa.feature.rms(y=segment, frame_length=frame, hop_length=hop)[0]
+    if rms_frames.size == 0:
+        return target_sample
+    min_idx = int(np.argmin(rms_frames))
+    split_sample = start + min_idx * hop
+    return int(np.clip(split_sample, 0, len(y_mono)))
+
+
+def _split_audio_at_silence(y: np.ndarray, sr: int, chunk_sec: float = _CHUNK_SEC) -> list:
+    """음원을 무음 구간 기반으로 chunk_sec 단위로 분할."""
+    y_mono = librosa.to_mono(y)
+    total_samples = y.shape[1]
+    chunk_samples = int(chunk_sec * sr)
+    chunks = []
+    pos = 0
+    while pos < total_samples:
+        target = pos + chunk_samples
+        if target >= total_samples:
+            chunks.append(y[:, pos:])
+            break
+        split = _find_split_point(y_mono, sr, target, search_sec=3.0)
+        chunks.append(y[:, pos:split])
+        pos = split
+    return [c for c in chunks if c.shape[1] > 0]
+
 
 def process_audio(input_path: str, output_path: str, options: dict):
     """"
     사용자가 선택한 6가지 음질 개선(DSP) 옵션을 실제로 연산합니다.
+    긴 음원은 자동으로 분할 처리 후 이어붙입니다.
     """""
     try:
-        # 1. Load Audio (Convert to Stereo for spatial processing)
+        import tempfile, os as _os
+        y_check, sr_check = librosa.load(input_path, sr=None, mono=False)
+        y_check = _ensure_stereo(y_check)
+        duration_sec = y_check.shape[1] / sr_check
+
+        if duration_sec > _LONG_AUDIO_SEC:
+            print(f"긴 음원 감지 ({duration_sec:.1f}초) → {_CHUNK_SEC}초 단위 분할 처리")
+            chunks = _split_audio_at_silence(y_check, sr_check, chunk_sec=_CHUNK_SEC)
+            del y_check
+            print(f"총 {len(chunks)}개 청크로 분할")
+
+            processed_chunks = []
+            for i, chunk in enumerate(chunks):
+                print(f"청크 {i+1}/{len(chunks)} 처리 중...")
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf_in:
+                    tmp_in = tf_in.name
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf_out:
+                    tmp_out = tf_out.name
+                try:
+                    sf.write(tmp_in, chunk.T, sr_check, subtype="PCM_16")
+                    success, msg, _ = _process_audio_core(tmp_in, tmp_out, options)
+                    if success:
+                        result, _ = librosa.load(tmp_out, sr=sr_check, mono=False)
+                        result = _ensure_stereo(result)
+                        processed_chunks.append(result)
+                    else:
+                        print(f"청크 {i+1} 처리 실패: {msg}, 원본 사용")
+                        processed_chunks.append(chunk)
+                finally:
+                    for p in [tmp_in, tmp_out]:
+                        if _os.path.exists(p):
+                            _os.remove(p)
+                del chunk
+
+            y_out = np.concatenate(processed_chunks, axis=1)
+            sr = sr_check
+
+            metrics = {}
+            try:
+                import pyloudnorm as pyln
+                meter = pyln.Meter(sr)
+                metrics["LUFS"] = round(meter.integrated_loudness(y_out.T), 2)
+                peak = np.max(np.abs(y_out))
+                rms = np.sqrt(np.mean(y_out**2))
+                crest_factor = 20 * np.log10(peak / (rms + 1e-10)) if peak > 0 else 0
+                metrics["Crest_dB"] = round(float(crest_factor), 2)
+                from scipy.stats import pearsonr
+                if y_out.shape[0] == 2:
+                    r, _ = pearsonr(y_out[0] + 1e-10, y_out[1] + 1e-10)
+                    metrics["Phase_Corr"] = round(float(r), 2)
+                else:
+                    metrics["Phase_Corr"] = 1.0
+                metrics["TruePeak_dBTP"] = round(_true_peak_db(y_out, upsample=4), 2)
+                metrics["Content"] = "chunked"
+                metrics["Mode"] = "chunked"
+            except Exception as e:
+                metrics = {"LUFS": 0, "Crest_dB": 0, "Phase_Corr": 0, "TruePeak_dBTP": 0, "Content": "chunked", "Mode": "chunked"}
+                print("Chunked metrics error:", e)
+
+            sf.write(output_path, y_out.T, sr, subtype="PCM_16")
+            return True, "Success (chunked)", metrics
+
+        del y_check
+        return _process_audio_core(input_path, output_path, options)
+
+    except Exception as e:
+        import traceback
+        return False, str(e) + "\n" + traceback.format_exc(), {}
+
+
+def _process_audio_core(input_path: str, output_path: str, options: dict):
+    """기존 process_audio 핵심 로직 (단일 청크용)"""
+    try:
+        # 1. Load Audio
+        y, sr = librosa.load(input_path, sr=None, mono=False)
         y, sr = librosa.load(input_path, sr=None, mono=False)
         y = _ensure_stereo(y)
         y = _normalize_headroom(y, headroom_db=3.0)
